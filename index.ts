@@ -113,7 +113,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "search_products",
-        description: "Search the entire Hayrioğlu product catalog (Kabinler, Su Depoları, Silolar, vb.) based on text queries or categories.",
+        description: "Search the structured Hayrioğlu product catalog (Kabinler, Su Depoları, Silolar, vb.) based on text queries or categories.",
         inputSchema: {
           type: "object",
           properties: {
@@ -139,17 +139,61 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             }
           }
         }
+      },
+      {
+        name: "read_website_article",
+        description: "Reads the informational text content from a general product category page (like moloz-kuleleri, deniz-bisikletleri) that do not have structured dimensions. Do not use this for water tanks.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            category_slug: {
+              type: "string",
+              description: "The URL slug of the category to read (e.g., moloz-kuleleri, deniz-bisikletleri, cop-konteynerleri, vb.)"
+            }
+          },
+          required: ["category_slug"]
+        }
       }
     ]
   };
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  if (request.params.name !== "search_products") {
+  if (request.params.name !== "search_products" && request.params.name !== "read_website_article") {
     throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
   }
 
   const args = request.params.arguments as any;
+
+  if (request.params.name === "read_website_article") {
+    const slug = args.category_slug;
+    const targetUrl = `${BASE_URL}${slug}`;
+    try {
+      const res = await fetch(targetUrl);
+      if (!res.ok) throw new Error(`Failed to fetch category page: ${res.statusText}`);
+      const html = await res.text();
+      const $ = cheerio.load(html);
+      
+      // Remove noisy elements
+      $('script, style, nav, header, footer, iframe, .pagination, .items-more').remove();
+      
+      // Extract text
+      let text = $('.category-desc').text().trim();
+      if (!text) text = $('.blog-item').text().trim();
+      if (!text) text = $('body').text().trim(); // Fallback
+      
+      text = text.replace(/\s+/g, ' ').trim();
+      
+      return {
+        content: [{ type: "text", text: `Information from ${slug}:\n\n${text}` }]
+      };
+    } catch (error: any) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Failed to fetch article: ${error.message}` }]
+      };
+    }
+  }
   const category = args?.category as string | undefined;
   const query = args?.query as string | undefined;
   const maxWidth = args?.max_width as number | undefined;
